@@ -7,48 +7,87 @@ from physics import G
 # Colors
 SPACE_BLACK = (5, 8, 20)
 YELLOW = (255, 255, 80)
-BLUE = (40, 122, 184)
-TRAIL_BLUE = (90, 150, 210)
+
+PLANET_COLORS = {
+    "Mercury": (170, 165, 155),
+    "Venus": (235, 190, 110),
+    "Earth": (40, 122, 220),
+    "Mars": (220, 85, 55),
+    "Jupiter": (210, 165, 125),
+    "Saturn": (220, 205, 155),
+    "Uranus": (125, 220, 220),
+    "Neptune": (65, 95, 235),
+}
+
+PLANET_RADII = {
+    "Mercury": 2,
+    "Venus": 3,
+    "Earth": 3,
+    "Mars": 2,
+    "Jupiter": 6,
+    "Saturn": 5,
+    "Uranus": 4,
+    "Neptune": 4,
+}
 
 # Camera settings
 ZOOM_FACTOR = 1.15
 MIN_ZOOM = 0.1
 MAX_ZOOM = 10.0
 
-# Trail settings
+# Display settings
+AU = 1.496e11
+PIXELS_PER_AU = 15
 TRAIL_ORBITS = 1.5
-SECONDS_PER_DAY = 86400
-SECONDS_PER_YEAR = 365.25 * SECONDS_PER_DAY
+
+# Trail appearance
+TRAIL_INTERVAL = 10
+TRAIL_RADIUS = 1
+
+# Simulation speed limits
+MIN_STEPS_PER_FRAME = 1
+MAX_STEPS_PER_FRAME = 100
+SPEED_STEP_CHANGE = 2
+
+SECONDS_PER_YEAR = 365.25 * 86400
 
 
-def get_orbital_period():
-    """Estimate the orbital period for a bound two-body orbit."""
-    r_vector = simulation.earth.position - simulation.sun.position
-    v_vector = simulation.earth.velocity - simulation.sun.velocity
+def get_orbital_period(body):
+    """Estimate a body's orbital period from its current state."""
+    r_vector = body.position - simulation.sun.position
+    v_vector = body.velocity - simulation.sun.velocity
 
-    r = math.sqrt(float(r_vector @ r_vector))
+    r = float(math.sqrt(r_vector @ r_vector))
     v_squared = float(v_vector @ v_vector)
 
     if r == 0:
         return SECONDS_PER_YEAR
 
-    mu = G * (simulation.sun.mass + simulation.earth.mass)
+    mu = G * (simulation.sun.mass + body.mass)
     specific_energy = v_squared / 2 - mu / r
 
-    # Unbound trajectories do not have a closed orbital period.
+    # Unbound trajectories have no closed orbital period.
     if specific_energy >= 0:
         return SECONDS_PER_YEAR
 
     semi_major_axis = -mu / (2 * specific_energy)
-    period = 2 * math.pi * math.sqrt(semi_major_axis**3 / mu)
-
-    return period
+    return 2 * math.pi * math.sqrt(semi_major_axis**3 / mu)
 
 
 def world_to_screen(position, center, offset, scale, zoom):
     return (
         round(center[0] + offset.x + position[0] * scale * zoom),
         round(center[1] + offset.y - position[1] * scale * zoom)
+    )
+
+
+def fade_color(color, age_fraction):
+    """Fade old trail points toward the background color."""
+    brightness = max(0.08, 1.0 - age_fraction)
+
+    return tuple(
+        round(SPACE_BLACK[i] + (color[i] - SPACE_BLACK[i]) * brightness)
+        for i in range(3)
     )
 
 
@@ -59,23 +98,38 @@ def main():
     pygame.display.set_caption("Orbital Lab - Amr")
 
     clock = pygame.time.Clock()
-    font = pygame.font.Font(None, 26)
+    font = pygame.font.Font(None, 23)
+    small_font = pygame.font.Font(None, 18)
 
     sun_center = (500, 350)
-    pixels_per_metre = 150 / 1.496e11
+    pixels_per_metre = PIXELS_PER_AU / AU
 
     zoom = 1.0
     camera_offset = pygame.Vector2(0, 0)
     dragging = False
 
-    # Each trail entry stores (physics position, simulated time).
-    trail = []
+    # Each trail entry stores (position, simulated time).
+    trails = {
+        body.name: [] for body in simulation.planets
+    }
+
     simulation_time = 0.0
     frame_counter = 0
-    trail_interval = 5
-
     paused = False
     running = True
+
+    def clear_trails():
+        nonlocal simulation_time, frame_counter
+
+        for points in trails.values():
+            points.clear()
+
+        simulation_time = 0.0
+        frame_counter = 0
+
+    def draw_text(text, x, y, color=(230, 230, 230)):
+        surface = font.render(text, True, color)
+        screen.blit(surface, (x, y))
 
     while running:
         for event in pygame.event.get():
@@ -85,32 +139,39 @@ def main():
 
             elif event.type == pygame.KEYDOWN:
 
+                # Change Earth's initial orbital speed.
                 if event.key == pygame.K_UP:
                     simulation.change_earth_speed(2000)
-
-                    # Clear the previous orbit and restart simulated time.
-                    trail.clear()
-                    simulation_time = 0.0
-                    frame_counter = 0
+                    clear_trails()
 
                 elif event.key == pygame.K_DOWN:
                     simulation.change_earth_speed(-2000)
+                    clear_trails()
 
-                    # Clear the previous orbit and restart simulated time.
-                    trail.clear()
-                    simulation_time = 0.0
-                    frame_counter = 0
-
+                # Reset the Solar System.
                 elif event.key == pygame.K_r:
                     simulation.reset_simulation()
-                    trail.clear()
-                    simulation_time = 0.0
-                    frame_counter = 0
+                    clear_trails()
 
+                # Adjust simulation speed without changing planet velocities.
+                elif event.key == pygame.K_RIGHTBRACKET:
+                    simulation.STEPS_PER_FRAME = min(
+                        simulation.STEPS_PER_FRAME + SPEED_STEP_CHANGE,
+                        MAX_STEPS_PER_FRAME
+                    )
+
+                elif event.key == pygame.K_LEFTBRACKET:
+                    simulation.STEPS_PER_FRAME = max(
+                        simulation.STEPS_PER_FRAME - SPEED_STEP_CHANGE,
+                        MIN_STEPS_PER_FRAME
+                    )
+
+                # Reset camera.
                 elif event.key == pygame.K_c:
                     zoom = 1.0
                     camera_offset = pygame.Vector2(0, 0)
 
+                # Pause / resume.
                 elif event.key == pygame.K_SPACE:
                     paused = not paused
 
@@ -151,50 +212,67 @@ def main():
                     camera_offset.x += event.rel[0]
                     camera_offset.y += event.rel[1]
 
-        # Advance physics and simulated time.
+        # Advance physics.
         if not paused:
             simulation.advance()
+
             simulation_time += (
                 simulation.dt * simulation.STEPS_PER_FRAME
             )
 
-        # Calculate the current orbital period.
-        orbital_period = get_orbital_period()
-        trail_lifetime = TRAIL_ORBITS * orbital_period
-
-        # Record a trail point periodically.
+        # Record trail points less frequently for a dotted appearance.
         if not paused:
             frame_counter += 1
 
-            if frame_counter >= trail_interval:
-                trail.append(
-                    (simulation.earth.position.copy(), simulation_time)
-                )
+            if frame_counter >= TRAIL_INTERVAL:
+                for body in simulation.planets:
+                    trails[body.name].append(
+                        (body.position.copy(), simulation_time)
+                    )
+
                 frame_counter = 0
 
-        # Remove trail points older than 1.5 orbital periods.
-        while trail and simulation_time - trail[0][1] > trail_lifetime:
-            trail.pop(0)
+        # Remove points older than approximately 1.5 orbital periods.
+        for body in simulation.planets:
+            lifetime = TRAIL_ORBITS * get_orbital_period(body)
+            points = trails[body.name]
+
+            while (
+                points
+                and simulation_time - points[0][1] > lifetime
+            ):
+                points.pop(0)
 
         screen.fill(SPACE_BLACK)
 
-        # Draw the trail using the current camera.
-        trail_radius = max(1, round(2 * min(zoom, 2)))
+        # Draw thinner, fading trails.
+        for body in simulation.planets:
+            lifetime = TRAIL_ORBITS * get_orbital_period(body)
+            color = PLANET_COLORS[body.name]
 
-        for position, timestamp in trail:
-            screen_pos = world_to_screen(
-                position,
-                sun_center,
-                camera_offset,
-                pixels_per_metre,
-                zoom
-            )
+            for position, timestamp in trails[body.name]:
+                age_fraction = (
+                    (simulation_time - timestamp) / lifetime
+                    if lifetime > 0 else 0
+                )
 
-            pygame.draw.circle(
-                screen, TRAIL_BLUE, screen_pos, trail_radius
-            )
+                trail_color = fade_color(
+                    color, min(1.0, max(0.0, age_fraction))
+                )
 
-        # Draw Sun and Earth.
+                screen_pos = world_to_screen(
+                    position,
+                    sun_center,
+                    camera_offset,
+                    pixels_per_metre,
+                    zoom
+                )
+
+                pygame.draw.circle(
+                    screen, trail_color, screen_pos, TRAIL_RADIUS
+                )
+
+        # Draw the Sun.
         sun_pos = world_to_screen(
             simulation.sun.position,
             sun_center,
@@ -203,40 +281,101 @@ def main():
             zoom
         )
 
-        earth_pos = world_to_screen(
-            simulation.earth.position,
-            sun_center,
-            camera_offset,
-            pixels_per_metre,
-            zoom
+        pygame.draw.circle(
+            screen, YELLOW, sun_pos,
+            max(4, round(8 * min(zoom, 2)))
         )
 
-        sun_radius = max(2, round(20 * zoom))
-        earth_radius = max(2, round(10 * zoom))
+        # Draw planets and labels.
+        for body in simulation.planets:
+            planet_pos = world_to_screen(
+                body.position,
+                sun_center,
+                camera_offset,
+                pixels_per_metre,
+                zoom
+            )
 
-        pygame.draw.circle(screen, YELLOW, sun_pos, sun_radius)
-        pygame.draw.circle(screen, BLUE, earth_pos, earth_radius)
+            radius = max(
+                2,
+                round(PLANET_RADII[body.name] * min(zoom, 2))
+            )
 
-        # Display current speed relative to the Sun.
+            pygame.draw.circle(
+                screen,
+                PLANET_COLORS[body.name],
+                planet_pos,
+                radius
+            )
+
+            label = small_font.render(
+                body.name,
+                True,
+                PLANET_COLORS[body.name]
+            )
+
+            screen.blit(
+                label,
+                (planet_pos[0] + radius + 3, planet_pos[1] - 8)
+            )
+
+        # Earth speed relative to the Sun.
         relative_velocity = (
             simulation.earth.velocity - simulation.sun.velocity
         )
+
         current_speed = math.sqrt(
             float(relative_velocity @ relative_velocity)
         )
 
-        speed_text = font.render(
+        draw_text(
             f"Earth speed: {current_speed / 1000:.2f} km/s",
-            True,
-            (230, 230, 230)
+            20, 18
         )
-        screen.blit(speed_text, (20, 20))
+
+        # Simulation clock and current speed setting.
+        years_elapsed = simulation_time / SECONDS_PER_YEAR
+
+        draw_text(
+            f"Simulated time: {years_elapsed:.3f} years",
+            20, 43
+        )
+
+        simulated_days_per_second = (
+            simulation.dt
+            * simulation.STEPS_PER_FRAME
+            * 60
+            / 86400
+        )
+
+        draw_text(
+            f"Simulation rate: {simulation.STEPS_PER_FRAME} steps/frame",
+            20, 68
+        )
+
+        draw_text(
+            f"Approx. {simulated_days_per_second:.1f} simulated days/sec",
+            20, 93
+        )
+
+        # Measure Earth-Jupiter separation to verify close encounters.
+        jupiter = next(
+            body for body in simulation.planets
+            if body.name == "Jupiter"
+        )
+
+        draw_text(
+            "[ / ]: simulation speed   Up / Down: Earth speed",
+            20, 143
+        )
+
+        draw_text(
+            "R: reset   Space: pause   C: reset camera",
+            20, 166
+        )
 
         if paused:
-            pause_text = font.render(
-                "PAUSED", True, (255, 255, 255)
-            )
-            screen.blit(pause_text, (20, 50))
+            draw_text("PAUSED", 20, 191, (255, 255, 255))
 
         pygame.display.flip()
         clock.tick(60)
