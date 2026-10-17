@@ -70,6 +70,13 @@ The model is simplified: it uses a 2D plane, idealized initial conditions, and a
 - `simulation.py` — Planet data, initial conditions, and simulation controls
 - `visualization.py` — Pygame window, rendering, trails, and user input
 
+## Video
+
+
+https://github.com/user-attachments/assets/064afbea-9b61-419e-a3e6-1b8c8f055147
+
+
+
 ---
 
 Built as a personal project while learning Python and computer science.
